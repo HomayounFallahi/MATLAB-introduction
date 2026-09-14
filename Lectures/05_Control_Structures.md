@@ -1094,7 +1094,7 @@ $$f(x) = x^3 - 2x - 5 = 0$$
 
 Using the Newton-Raphson method, which iterates:
 
-$$x_{n+1} = x_n - \frac{f(x_n)}{f''(x_n)}$$
+$$x_{n+1} = x_n - \frac{f(x_n)}{f'(x_n)}$$
 
 where $f''(x) = 3x^2 - 2$ is the derivative.
 
