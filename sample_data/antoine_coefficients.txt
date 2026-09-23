@@ -1,0 +1,7 @@
+# Antoine equation: log10(P_bar) = A - B/(T_C + C)
+# Component, A, B, C, Tmin_C, Tmax_C
+Water, 5.1962, 1730.63, -233.426, 1, 100
+Ethanol, 5.2467, 1598.67, -46.816, 0, 80
+Benzene, 4.0045, 1171.53, -55.0, 10, 80
+Toluene, 4.0504, 1327.62, -55.525, 20, 110
+Acetone, 4.2184, 1190.65, -57.87, -20, 60
