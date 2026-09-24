@@ -599,9 +599,9 @@ MATLAB provides the `readtable` function for easy CSV reading:
 data_table = readtable('sample_data\temp_log.csv');
 
 % Access columns by name
-time = data_table.Time_s_;
-temperature = data_table.Temperature_K_;
-pressure = data_table.Pressure_bar_;
+time = data_table.Time_s;
+temperature = data_table.Temperature_K;
+pressure = data_table.Pressure_bar;
 
 % warning('off', 'MATLAB:table:ModifiedAndSavedVariableNames');
 % or: 
@@ -735,9 +735,9 @@ Save a table to a file:
 
 ```matlab
 % Create table
-Time = (0:10)" ;
-Temperature = [20, 22, 25, 28, 32, 35, 37, 38, 38, 38, 38]";
-Pressure = [1.0, 1.05, 1.1, 1.15, 1.2, 1.22, 1.23, 1.23, 1.23, 1.23, 1.23]";
+Time = (0:10)' ;
+Temperature = [20, 22, 25, 28, 32, 35, 37, 38, 38, 38, 38]';
+Pressure = [1.0, 1.05, 1.1, 1.15, 1.2, 1.22, 1.23, 1.23, 1.23, 1.23, 1.23]';
 
 data_table = table(Time, Temperature, Pressure);
 
@@ -789,7 +789,8 @@ equipment = readtable("sample_data\pump_specifications.xlsx", "Sheet", "Pumps");
 flow_min = 50;  % L/min
 flow_max = 200; % L/min
 
-suitable = equipment(equipment.MaxFlow >= flow_min & equipment.MaxFlow <= flow_max, :);
+COND = equipment.MaxFlow >= flow_min & equipment.MaxFlow <= flow_max;
+suitable = equipment(COND, :);
 
 % Display suitable pumps
 disp(suitable(:, {'Model', 'MaxFlow', 'HeadMax', 'Power'}))
