@@ -1389,9 +1389,10 @@ A 1 by 2 cm ceramic strip [k = 3.0 W/m . °C] is embedded in a high-thermal-cond
 ```matlab
 %% ========================================================================
 %  Holman, "Heat Transfer" (10th ed.) - Example 4-13
-%  Transient 2-D conduction in a ceramic strip embedded in a
-%  high-conductivity material, solved by the EXPLICIT finite-difference
-%  (nodal network / thermal-resistance-capacitance) method.
+%  Transient 2-D conduction in a ceramic strip, solved by the IMPLICIT
+%  (backward-Euler) finite-difference method: at every time step the
+%  nodal energy-balance equations are assembled into a residual function
+%  F(Tnew) = 0 and solved with fsolve().
 %
 %  Geometry (see Fig. Example 4-13):
 %   - 1 cm (y) x 2 cm (x) ceramic strip, k = 3.0 W/m.C
@@ -1400,8 +1401,8 @@ A 1 by 2 cm ceramic strip [k = 3.0 W/m . °C] is embedded in a high-thermal-cond
 %   - Top (y = 0)                   : convection, h, Tinf
 %   - Initial condition             : T = 300 C everywhere
 %
-%  A 3x3 nodal grid (dx = dy = 0.5 cm) is used. By left-right symmetry
-%  T1=T3, T4=T6, T7=T9, leaving 6 unknown nodal temperatures:
+%  3x3 nodal grid (dx = dy = 0.5 cm). By left-right symmetry T1=T3,
+%  T4=T6, T7=T9, leaving 6 unknown nodal temperatures:
 %
 %        1 --- 2 --- 3      (top row,    convection boundary)
 %        |     |     |
@@ -1409,37 +1410,39 @@ A 1 by 2 cm ceramic strip [k = 3.0 W/m . °C] is embedded in a high-thermal-cond
 %        |     |     |
 %        7 --- 8 --- 9      (bottom row, insulated boundary)
 %
+%  Implicit backward-Euler energy balance for node i:
+%       C_i * (Tnew_i - Told_i) / tau  =  sum_j (Tnew_j - Tnew_i) / R_ij
+%  (all neighbor temperatures Tnew_j taken at the NEW time level, which
+%  is what makes the method unconditionally stable and requires an
+%  implicit solve instead of a simple explicit update.)
+%
 % ========================================================================
 
 clear; clc; close all;
 
 %% ---------------------- 1. Problem data -------------------------------
-k = 3.0;           % thermal conductivity, W/m.C
-rho = 1600;        % density, kg/m^3
-c = 0.8e3;         % specific heat, J/kg.C
-h = 200;           % convection coefficient, W/m^2.C
-Tinf = 50;         % ambient temperature, C
-Tw = 300;          % side-wall temperature, C
-T0 = 300;          % initial temperature, C
+k       = 3.0;          % thermal conductivity, W/m.C
+rho     = 1600;         % density, kg/m^3
+c       = 0.8e3;        % specific heat, J/kg.C
+h       = 200;          % convection coefficient, W/m^2.C
+Tinf    = 50;           % ambient temperature, C
+Tw      = 300;          % side-wall temperature, C
+T0      = 300;          % initial temperature, C
 
-dx = 0.5e-2;            % nodal spacing, m
-dy = 0.5e-2;            % nodal spacing, m
-depth = 1;              % unit depth (per metre of strip length), m
+dx      = 0.5e-2;       % nodal spacing, m
+dy      = 0.5e-2;       % nodal spacing, m
+depth   = 1;            % unit depth (per metre of strip length), m
 
-t_final = 12;             % total time to simulate, s
-tau     = 2.0;            % chosen time step, s  (book value)
+t_final = 12;           % total time to simulate, s
+tau     = 2.0;          % time step, s (implicit method is
+                        % unconditionally stable, so this is a
+                        % free choice - kept equal to the book's
+                        % explicit-method value for comparison)
 
 %% ------------------- 2. Thermal resistances ----------------------------
-% "Full" internal resistance (interior nodes 4,5): area = dy*depth
-R_int = dx / (k * dy * depth);          % 0.3333 C/W
-
-% "Half" resistance for edge (top/bottom row) nodes 1,2,7,8:
-% these have only a half control-volume in the y-direction, so the
-% lateral (m-direction) conduction area is dy/2 -> resistance doubles
-R_edge  = dx / (k * (dy/2) * depth);     % 0.6667 C/W
-
-% Convection resistance at the top surface (nodes 1,2), area = dx*depth
-R_conv = 1 / (h * dx * depth);           % 1.0 C/W
+R_int   = dx / (k * dy * depth);          % interior lateral/vertical link, 0.3333 C/W
+R_edge  = dx / (k * (dy/2) * depth);      % edge-row lateral link,          0.6667 C/W
+R_conv  = 1 / (h * dx * depth);           % top-surface convective link,    1.0000 C/W
 
 fprintf('Resistances  :  R_int = %.4f C/W , R_edge = %.4f C/W , R_conv = %.4f C/W\n', ...
          R_int, R_edge, R_conv);
@@ -1450,112 +1453,76 @@ C_edge = rho * c * dx * (dy/2) * depth;    % edge node (1,2,7,8) - half cell
 
 fprintf('Capacities   :  C_full = %.2f J/C , C_edge = %.2f J/C\n\n', C_full, C_edge);
 
-%% ------------------- 4. Assemble the 6-node explicit network -----------
+%% ------------------- 4. Assemble the 6-node network ---------------------
 % Unknown vector order: [T1 T2 T4 T5 T7 T8]
 idx.T1 = 1; idx.T2 = 2; idx.T4 = 3; idx.T5 = 4; idx.T7 = 5; idx.T8 = 6;
+names  = {'1','2','4','5','7','8'};
+N = 6;
 
 C = [C_edge; C_edge; C_full; C_full; C_edge; C_edge];   % nodal capacities
 
-% For each node store: [neighbor_index_or_0, resistance] pairs.
-% neighbor_index = 0  ->  fixed-temperature reservoir (wall or ambient)
-% A node's own T3=T1, T6=T4, T9=T7 mirror is folded in directly, i.e.
-% node 2's two lateral neighbors (T1 and T3) both map to idx.T1.
+% Each row of a node's "links" matrix = [neighbor_index, R_ij, fixedT]
+% neighbor_index = 0  ->  fixed-temperature reservoir (wall or ambient),
+% with its value given in the 3rd column (NaN when the link goes to
+% another unknown node instead of a reservoir).
 
-nbr(idx.T1).links = [0,      R_edge,  Tw;     % left wall
-                      idx.T2, R_edge,  NaN;    % right -> node 2
-                      idx.T4, R_int,   NaN;    % down  -> node 4
-                      0,      R_conv,  Tinf];  % up    -> convection
+net(idx.T1).links = [0,      R_edge,  Tw;     % left wall
+                      idx.T2, R_edge,  NaN;    % -> node 2
+                      idx.T4, R_int,   NaN;    % -> node 4
+                      0,      R_conv,  Tinf];  % convection to ambient
 
-nbr(idx.T2).links = [idx.T1, R_edge,  NaN;     % left  -> node 1 (=T3 mirror)
-                      idx.T1, R_edge,  NaN;    % right -> node 3 (=T1 by symmetry)
-                      idx.T5, R_int,   NaN;    % down  -> node 5
-                      0,      R_conv,  Tinf];  % up    -> convection
+net(idx.T2).links = [idx.T1, R_edge,  NaN;     % -> node 1 (mirror of node 3)
+                      idx.T1, R_edge,  NaN;    % -> node 3 (= node 1 by symmetry)
+                      idx.T5, R_int,   NaN;    % -> node 5
+                      0,      R_conv,  Tinf];  % convection to ambient
 
-nbr(idx.T4).links = [0,      R_int,   Tw;      % left wall
-                      idx.T5, R_int,   NaN;    % right -> node 5
-                      idx.T1, R_int,   NaN;    % up    -> node 1
-                      idx.T7, R_int,   NaN];   % down  -> node 7
+net(idx.T4).links = [0,      R_int,   Tw;      % left wall
+                      idx.T5, R_int,   NaN;    % -> node 5
+                      idx.T1, R_int,   NaN;    % -> node 1
+                      idx.T7, R_int,   NaN];   % -> node 7
 
-nbr(idx.T5).links = [idx.T4, R_int,   NaN;     % left  -> node 4 (=T6 mirror)
-                      idx.T4, R_int,   NaN;    % right -> node 6 (=T4 by symmetry)
-                      idx.T2, R_int,   NaN;    % up    -> node 2
-                      idx.T8, R_int,   NaN];   % down  -> node 8
+net(idx.T5).links = [idx.T4, R_int,   NaN;     % -> node 4 (mirror of node 6)
+                      idx.T4, R_int,   NaN;    % -> node 6 (= node 4 by symmetry)
+                      idx.T2, R_int,   NaN;    % -> node 2
+                      idx.T8, R_int,   NaN];   % -> node 8
 
-nbr(idx.T7).links = [0,      R_edge,  Tw;      % left wall
-                      idx.T8, R_edge,  NaN;    % right -> node 8
-                      idx.T4, R_int,   NaN];   % up    -> node 4
-                      % bottom is insulated -> no link
+net(idx.T7).links = [0,      R_edge,  Tw;      % left wall
+                      idx.T8, R_edge,  NaN;    % -> node 8
+                      idx.T4, R_int,   NaN];   % -> node 4
+                      % bottom insulated -> no link
 
-nbr(idx.T8).links = [idx.T7, R_edge,  NaN;     % left  -> node 7 (=T9 mirror)
-                      idx.T7, R_edge,  NaN;    % right -> node 9 (=T7 by symmetry)
-                      idx.T5, R_int,   NaN];   % up    -> node 5
-                      % bottom is insulated -> no link
+net(idx.T8).links = [idx.T7, R_edge,  NaN;     % -> node 7 (mirror of node 9)
+                      idx.T7, R_edge,  NaN;    % -> node 9 (= node 7 by symmetry)
+                      idx.T5, R_int,   NaN];   % -> node 5
+                      % bottom insulated -> no link
 
-N = 6;
+%% ------------------- 5. Implicit time march using fsolve ----------------
+nSteps      = round(t_final / tau);
+T           = T0 * ones(N,1);
+Thist       = zeros(N, nSteps+1);
+Thist(:,1)  = T;
 
-%% ------------------- 5. Stability check (Eq. 4-47 criterion) -----------
-tau_max = zeros(N,1);
-for i = 1:N
-    sumInvR = sum(1 ./ nbr(i).links(:,2));
-    tau_max(i) = C(i) / sumInvR;
-end
-
-names = {'1','2','4','5','7','8'};
-fprintf('Stability limit  tau_max = C_i / sum(1/R_ij):\n');
-for i = 1:N
-    fprintf('   node %-2s :  C=%5.1f J/C   sum(1/R)=%5.3f 1/W   tau_max=%6.3f s\n', ...
-             names{i}, C(i), sum(1./nbr(i).links(:,2)), tau_max(i));
-end
-fprintf('   ==> governing limit: tau <= %.3f s   (chosen tau = %.2f s)\n\n', ...
-         min(tau_max), tau);
-
-if tau > min(tau_max)
-    warning('Chosen time step exceeds the stability limit - solution may oscillate/diverge.');
-end
-
-%% ------------------- 6. Explicit march: T_i^(p+1) = T_i^p + (tau/C_i)*sum((Tj-Ti)/Rij)
-nSteps = round(t_final / tau);
-T = T0 * ones(N,1);
-Thist = zeros(N, nSteps+1);
-Thist(:,1) = T;
+opts = optimset('Display','off', 'TolFun',1e-10, 'TolX',1e-10);
 
 for p = 1:nSteps
-    Tnew = zeros(N,1);
-    for i = 1:N
-        L = nbr(i).links;
-        q_in = 0;
-        for r = 1:size(L,1)
-            j = L(r,1);
-            Rij = L(r,2);
-            if j == 0
-                Tj = L(r,3);           % fixed reservoir (wall or Tinf)
-            else
-                Tj = T(j);
-            end
-            q_in = q_in + (Tj - T(i)) / Rij;
-        end
-        Tnew(i) = T(i) + (tau / C(i)) * q_in;
-    end
+    Told  = T;                      % known temperatures at start of step
+    Tnew0 = Told;                   % initial guess for fsolve = previous step
+    Tnew  = fsolve(@(Tg) nodalResiduals(Tg, Told, C, net, tau), Tnew0, opts);
     T = Tnew;
     Thist(:,p+1) = T;
 end
 
-%% ------------------- 7. Print the result table (book format) -----------
-fprintf('Node temperature history (deg C):\n');
+%% ------------------- 6. Print the result table --------------------------
+fprintf('Node temperature history (deg C) - IMPLICIT (backward-Euler) method:\n');
 fprintf('  step   t(s)     T1       T2       T4       T5       T7       T8\n');
+
 for p = 0:nSteps
     fprintf('  %3d   %5.1f  %7.2f  %7.2f  %7.2f  %7.2f  %7.2f  %7.2f\n', ...
         p, p*tau, Thist(1,p+1), Thist(2,p+1), Thist(3,p+1), ...
         Thist(4,p+1), Thist(5,p+1), Thist(6,p+1));
 end
 
-%% ------------------- 8. Total heat loss over 0 -> t_final ---------------
-% q = sum_i  C_i * (T0 - T_i(t_final)),  summed over ALL 9 physical nodes
-% (constant-T wall nodes contribute nothing). Using symmetry:
-%   nodes 1,3  -> 2*C_edge*(T0-T1)     nodes 7,9 -> 2*C_edge*(T0-T7)
-%   node  2    ->   C_edge*(T0-T2)     node  8   ->   C_edge*(T0-T8)
-%   nodes 4,6  -> 2*C_full*(T0-T4)
-%   node  5    ->   C_full*(T0-T5)
+%% ------------------- 7. Total heat loss over 0 -> t_final ---------------
 T1f = Thist(1,end); T2f = Thist(2,end);
 T4f = Thist(3,end); T5f = Thist(4,end);
 T7f = Thist(5,end); T8f = Thist(6,end);
@@ -1568,18 +1535,18 @@ qdot_avg = q / t_final;
 fprintf('\nTotal heat loss over %.0f s   : q     = %8.1f J   (per m of strip length)\n', t_final, q);
 fprintf('Average heat-loss rate        : q/tau = %8.1f W   (per m of strip length)\n', qdot_avg);
 
-%% ------------------- 9. Plots -------------------------------------------
-figure('Name','Example 4-13: Nodal temperature histories');
+%% ------------------- 8. Plots -------------------------------------------
+figure('Name','Example 4-13 (implicit): Nodal temperature histories');
 t_vec = (0:nSteps)*tau;
 plot(t_vec, Thist','-o','LineWidth',1.4,'MarkerSize',4); grid on;
 xlabel('Time, s'); ylabel('Temperature, ^{\circ}C');
-title('Transient nodal temperatures - Holman Example 4-13 (explicit method)');
+title('Transient nodal temperatures - Holman Example 4-13 (implicit, fsolve)');
 legend({'T_1 (=T_3)','T_2','T_4 (=T_6)','T_5','T_7 (=T_9)','T_8'}, 'Location','southwest');
 
-figure('Name','Example 4-13: Final temperature field');
-Tfield = [T1f T2f T1f; T4f T5f T4f; T7f T8f T7f];   % reconstruct full 3x3 field
-x_cm = [0.5 1.0 1.5];      % node column positions, cm
-y_cm = [0.0 0.5 1.0];      % node row positions, cm (0 = top/convection side)
+figure('Name','Example 4-13 (implicit): Final temperature field');
+Tfield = [T1f T2f T1f; T4f T5f T4f; T7f T8f T7f];
+x_cm = [0.5 1.0 1.5];
+y_cm = [0.0 0.5 1.0];
 imagesc(x_cm, y_cm, Tfield); axis image; set(gca,'YDir','normal');
 colorbar; colormap('turbo');
 xlabel('x, cm'); ylabel('y, cm');
@@ -1588,6 +1555,32 @@ for ii = 1:3
     for jj = 1:3
         text(x_cm(jj), y_cm(ii), sprintf('%.1f', Tfield(ii,jj)), ...
              'HorizontalAlignment','center','Color','w','FontWeight','bold');
+    end
+end
+
+%% ========================================================================
+%  Local function: nodal energy-balance residuals for the implicit scheme
+%  This is the system F(Tnew) = 0 that fsolve() solves at every time
+%  step. Each row implements one node's backward-Euler energy balance:
+%
+% ========================================================================
+function R = nodalResiduals(Tnew, Told, C, net, tau)
+    N = numel(Tnew);
+    R = zeros(N,1);
+    for i = 1:N
+        L = net(i).links;           % this node's [neighbor, R_ij, fixedT] rows
+        q_net = 0;                  % net conductive/convective heat IN to node i
+        for r = 1:size(L,1)
+            j   = L(r,1);
+            Rij = L(r,2);
+            if j == 0
+                Tj = L(r,3);        % fixed reservoir (wall or ambient)
+            else
+                Tj = Tnew(j);       % neighbor's NEW (unknown) temperature
+            end
+            q_net = q_net + (Tj - Tnew(i)) / Rij;
+        end
+        R(i) = C(i) * (Tnew(i) - Told(i)) / tau - q_net;
     end
 end
 ```
