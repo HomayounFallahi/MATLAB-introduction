@@ -252,6 +252,17 @@ MATLAB's `gradient` computes numerical gradient using central differences for in
 
 The `gradient()` function handles edge cases automatically:
 
+### Syntax Breakdown
+
+```matlab
+dF = gradient(F, X);
+```
+
+- `F` — function values (vector)
+- `X` — corresponding x values
+- Output: derivative at each point
+- Uses one-sided differences at endpoints, central elsewhere
+
 ```matlab
 % Compute gradient of a function
 x = linspace(0, 2*pi, 100);
@@ -272,17 +283,6 @@ ylabel("Value")
 legend()
 grid on
 ```
-
-### Syntax Breakdown
-
-```matlab
-dF = gradient(F, X);
-```
-
-- `F` — function values (vector)
-- `X` — corresponding x values
-- Output: derivative at each point
-- Uses one-sided differences at endpoints, central elsewhere
 
 ### Second Derivatives
 
@@ -426,25 +426,6 @@ I = trapz(x, y);       % Integral of y with respect to x
 I = trapz(y);          % If x is [1, 2, ..., n], default unit spacing
 I = trapz(x, y, dim);  % Integrate along dimension dim (for matrices)
 ```
-
-#### `integral()` — Adaptive Numerical Integration
-
-```matlab
-I = integral(fun, a, b);
-I = integral(fun, a, b, 'AbsTol', tol, 'RelTol', reltol);
-
-% quad: older method
-I_quad = quad(fun, -5, 5);
-```
-
-- `fun` — function handle (vectorized: @(x) ...)
-- `a, b` — integration limits
-- `'AbsTol'` — absolute tolerance (default 1e-10)
-- `'RelTol'` — relative tolerance
-- `Inf` — supported as limit
-
-`integral()` uses adaptive quadrature (automatically adjusts step size) and requires a function handle, not tabulated data.
-
 ### Syntax Breakdown
 
 ```matlab
@@ -456,6 +437,26 @@ I = trapz(x, y);
 - `I` — Approximate value of the integral $\int_a^b y \, dx$
 
 **Important:** `x` and `y` must have the same length.
+
+---
+
+#### `integral()` — Adaptive Numerical Integration
+
+```matlab
+I = integral(fun, a, b);
+I = integral(fun, a, b, 'AbsTol', tol, 'RelTol', reltol);
+
+% quad: older method
+I_quad = quad(fun, -5, 5);
+```
+
+- `fun` — function handle
+- `a, b` — integration limits
+- `'AbsTol'` — absolute tolerance (default 1e-10)
+- `'RelTol'` — relative tolerance
+- `Inf` — supported as limit
+
+`integral()` uses adaptive quadrature (automatically adjusts step size) and requires a function handle, not tabulated data.
 
 ```matlab
 I = integral(@(x) sin(x), 0, pi);
@@ -641,12 +642,20 @@ Simpson more accurate than trapezoidal for smooth functions, but **requires unif
 
 For functions (not discrete data), use adaptive quadrature: `integral` (recommended), `quad` (old), `integral2` for 2D, `integral3` for 3D.
 
-If you have an analytical function (not just data points), use `integral()` for automatic, adaptive integration:
+If you have an analytical function (**not just data points**), use `integral()` for automatic, adaptive integration:
 ```matlab
 % Syntax
 I = integral(fun, a, b)
 I = integral(fun, a, b, 'RelTol',1e-6, 'AbsTol',1e-10)
 
+% 2D integral
+I= integral2(fun,xmin,xmax,ymin,ymax)
+
+% 3D integral
+I3 = integral3(fun,xmin,xmax,ymin,ymax,zmin,zmax)
+```
+
+```matlab
 % Example: integral sin from 0 to pi
 fun = @(x) sin(x);
 I = integral(fun, 0, pi)  % 2
@@ -658,6 +667,7 @@ I = integral(fun, 0.2, 1.0)  % same as PFR integral
 % 2D integral
 fun2 = @(x,y) x.*y;
 I2 = integral2(fun2, 0,1, 0,1)  % int_0^1 int_0^1 x*y dx dy = 0.25
+
 ```
 
 ```matlab
